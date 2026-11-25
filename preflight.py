@@ -122,7 +122,7 @@ def check_repo(repo_url, rules=None):
     if readme_exists:
         record_result("PASS", "README exists")
     else:
-        record_result("WARN", "README exists (missing)")
+        record_result("WARN", "README file missing")
 
     # Check 3: LICENSE exists (WARN if missing)
     license_api_url = f"https://api.github.com/repos/{owner}/{repo}/license"
@@ -144,7 +144,7 @@ def check_repo(repo_url, rules=None):
     if license_exists:
         record_result("PASS", "LICENSE exists")
     else:
-        record_result("WARN", "LICENSE exists (missing)")
+        record_result("WARN", "LICENSE file missing")
 
     # Check 4: No file named .env anywhere in the repo (FAIL if found). .env.example is fine.
     env_file_found = None
