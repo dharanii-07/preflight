@@ -300,6 +300,14 @@ def check_repo(repo_url, rules=None):
 
 
 def check_demo(demo_url):
+    url_lower = demo_url.strip().lower()
+    if "localhost" in url_lower or "127.0.0.1" in url_lower:
+        record_result("FAIL", "Demo URL contains localhost or 127.0.0.1")
+        return
+
+    if url_lower.startswith("http://"):
+        record_result("WARN", "Demo URL starts with http:// instead of https://")
+
     try:
         t0 = time.perf_counter()
         resp1 = requests.get(demo_url, headers={"User-Agent": "preflight"}, timeout=TIMEOUT)
@@ -314,9 +322,29 @@ def check_demo(demo_url):
             record_result("FAIL", f"Demo returned HTTP {resp2.status_code}")
             return
 
+        body = resp1.text or ""
+        body_lower = body.lower().replace("’", "'")
+        error_phrases = [
+            "application error",
+            "deployment not found",
+            "site can't be reached",
+            "502 bad gateway",
+            "this site is not available",
+        ]
+
+        response_warned = False
+        if any(phrase in body_lower for phrase in error_phrases):
+            record_result("WARN", "Demo page shows an error")
+            response_warned = True
+        elif len(body) < 200:
+            record_result("WARN", "Demo page looks empty")
+            response_warned = True
+
         if elapsed > 3.0:
             record_result("WARN", f"Demo responded in {elapsed:.2f}s (took over 3s)")
-        else:
+            response_warned = True
+
+        if not response_warned:
             record_result("PASS", f"Demo responded in {elapsed:.2f}s")
     except requests.exceptions.RequestException as e:
         err_msg = str(e).lower()
