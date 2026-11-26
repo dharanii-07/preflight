@@ -1,5 +1,6 @@
 import argparse
 import os
+import re
 import sys
 import time
 import urllib.parse
@@ -8,6 +9,58 @@ import yaml
 
 TIMEOUT = 10
 results = []
+
+BINARY_EXTENSIONS = {
+    # Images
+    ".png", ".jpg", ".jpeg", ".gif", ".ico", ".webp", ".bmp", ".tiff", ".psd", ".svg",
+    # Audio & Video
+    ".mp3", ".mp4", ".wav", ".ogg", ".avi", ".mov", ".flv", ".mkv", ".webm", ".m4a",
+    # Archives & Compressed
+    ".zip", ".tar", ".gz", ".tgz", ".bz2", ".7z", ".rar", ".xz",
+    # Executables & Binaries
+    ".exe", ".dll", ".so", ".dylib", ".bin", ".o", ".a", ".pyc", ".pyd", ".class", ".jar",
+    # Documents & Fonts
+    ".pdf", ".doc", ".docx", ".xls", ".xlsx", ".ppt", ".pptx",
+    ".ttf", ".otf", ".woff", ".woff2", ".eot",
+    # Data & Models
+    ".db", ".sqlite", ".sqlite3", ".pkl", ".pickle", ".parquet", ".iso",
+}
+
+SECRET_PATTERNS = [
+    re.compile(r"(?<![a-zA-Z0-9])sk-[a-zA-Z0-9_\-]{6,}"),
+    re.compile(r"(?<![a-zA-Z0-9])AIza[a-zA-Z0-9_\-]{8,}"),
+    re.compile(r"(?<![a-zA-Z0-9])ghp_[a-zA-Z0-9]{8,}"),
+    re.compile(r"(?<![a-zA-Z0-9])AKIA[a-zA-Z0-9]{10,}"),
+]
+
+
+def is_binary_file(path, content_bytes=None):
+    _, ext = os.path.splitext(path.lower())
+    if ext in BINARY_EXTENSIONS:
+        return True
+    if content_bytes is not None and b"\x00" in content_bytes[:8000]:
+        return True
+    return False
+
+
+def fetch_file_content(session, owner, repo, default_branch, path):
+    raw_url = f"https://raw.githubusercontent.com/{owner}/{repo}/{default_branch}/{path}"
+    try:
+        r = session.get(raw_url, timeout=TIMEOUT)
+        if r.status_code == 200:
+            return r.content
+    except requests.RequestException:
+        pass
+
+    api_url = f"https://api.github.com/repos/{owner}/{repo}/contents/{path}?ref={default_branch}"
+    try:
+        r = session.get(api_url, headers={"Accept": "application/vnd.github.v3.raw"}, timeout=TIMEOUT)
+        if r.status_code == 200:
+            return r.content
+    except requests.RequestException:
+        pass
+
+    return None
 
 
 def record_result(status, message):
@@ -158,6 +211,40 @@ def check_repo(repo_url, rules=None):
         record_result("FAIL", f"No file named .env anywhere in the repo (found {env_file_found})")
     else:
         record_result("PASS", "No file named .env anywhere in the repo")
+
+    # Secret scan: scan up to 50 non-binary files under 200 KB
+    secret_file_found = None
+    scanned_count = 0
+    for item in tree:
+        if item.get("type") != "blob":
+            continue
+        path = item.get("path", "")
+        size = item.get("size")
+        if size is not None and size > 200 * 1024:
+            continue
+        if is_binary_file(path):
+            continue
+
+        content_bytes = fetch_file_content(session, owner, repo, default_branch, path)
+        if not content_bytes:
+            continue
+
+        if len(content_bytes) > 200 * 1024 or is_binary_file(path, content_bytes):
+            continue
+
+        scanned_count += 1
+        text = content_bytes.decode("utf-8", errors="ignore")
+        if any(pattern.search(text) for pattern in SECRET_PATTERNS):
+            secret_file_found = path
+            break
+
+        if scanned_count >= 50:
+            break
+
+    if secret_file_found:
+        record_result("FAIL", f"Secret found in {secret_file_found}")
+    else:
+        record_result("PASS", "No secrets found in repo")
 
     # Check 5: Commits before event_start (WARN). Needs rules file.
     if rules and "event_start" in rules and rules["event_start"]:
