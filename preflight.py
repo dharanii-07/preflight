@@ -1,4 +1,5 @@
 import argparse
+import base64
 import os
 import re
 import sys
@@ -158,10 +159,19 @@ def check_repo(repo_url, rules=None):
     # Check 2: README exists (WARN if missing)
     readme_api_url = f"https://api.github.com/repos/{owner}/{repo}/readme"
     readme_exists = False
+    readme_path = None
+    readme_content = None
     try:
         readme_resp = session.get(readme_api_url, timeout=TIMEOUT)
         if readme_resp.status_code == 200:
             readme_exists = True
+            try:
+                data = readme_resp.json()
+                readme_path = data.get("path")
+                if data.get("encoding") == "base64" and data.get("content"):
+                    readme_content = base64.b64decode(data["content"]).decode("utf-8", errors="ignore")
+            except Exception:
+                pass
     except requests.RequestException:
         pass
 
@@ -170,12 +180,31 @@ def check_repo(repo_url, rules=None):
             path = item.get("path", "")
             if "/" not in path and path.lower().startswith("readme"):
                 readme_exists = True
+                readme_path = path
                 break
 
     if readme_exists:
         record_result("PASS", "README exists")
     else:
         record_result("WARN", "README file missing")
+
+    # README quality check
+    if readme_exists:
+        if readme_content is None:
+            path_to_fetch = readme_path or "README.md"
+            content_bytes = fetch_file_content(session, owner, repo, default_branch, path_to_fetch)
+            if content_bytes:
+                readme_content = content_bytes.decode("utf-8", errors="ignore")
+            else:
+                readme_content = ""
+
+        keywords = ["install", "run", "usage", "setup", "getting started"]
+        if len(readme_content) < 200:
+            record_result("WARN", "README is very short")
+        elif not any(kw in readme_content.lower() for kw in keywords):
+            record_result("WARN", "README has no run instructions")
+        else:
+            record_result("PASS", "README quality check passed")
 
     # Check 3: LICENSE exists (WARN if missing)
     license_api_url = f"https://api.github.com/repos/{owner}/{repo}/license"
