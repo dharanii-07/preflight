@@ -1,0 +1,9 @@
+name: K-Hacks 4.0 Round 2 (Anna University, Chennai)
+event_start: 2026-12-17
+event_end: 2026-12-18
+manual_checks:
+  - Problem statement is one of the official ones released 7 days before
+  - Project is new, not brought from a previous hackathon (disclose it if not)
+  - Team has 2 to 4 members, all current engineering students in India
+  - Laptop and any required components are packed
+  - Pitch covers innovation, implementation, impact, business value, feasibility
